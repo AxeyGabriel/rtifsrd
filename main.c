@@ -15,12 +15,60 @@
 #include <inttypes.h>
 #include <syslog.h>
 #include <zmq.h>
+#include <fcntl.h>
+#include <signal.h>
+
+int signal_fd;
+
+void sighandler(int signal)
+{
+	int rc = write(signal_fd, " ", 1);
+	if (rc != 1)
+	{
+		syslog(LOG_ERR, "Signal handler: Error writing to pipe");
+		exit(1);
+	}
+}
 
 int main(int argc, char **argv)
 {
 	int rc;
+	int pipefds[2];
+
+	openlog("rtifsrd", LOG_PID | LOG_NDELAY, LOG_LOCAL0);
+	syslog(LOG_INFO, "System started, initializing...");
+	
+	rc = pipe(pipefds);
+	if (rc != 0)
+	{
+		syslog(LOG_ERR, "Error creating pipe: %m");
+		return 1;
+	}
+	
+	int i;
+	for (i = 0; i < 2; i++)
+	{
+		int flags = fcntl(pipefds[i], F_GETFL, 0);
+		if (flags < 0)
+		{
+			syslog(LOG_ERR, "Error: fcntl: %m");
+			return 1;
+		}
+		rc = fcntl(pipefds[i], F_SETFL, flags | O_NONBLOCK);
+		if (rc != 0)
+		{
+			syslog(LOG_ERR, "Error: fcntl: %m");
+			return 1;
+		}
+	}
+
+	signal_fd = pipefds[1];
+
 	void *context = zmq_ctx_new();
 	void *senders = zmq_socket(context, ZMQ_XSUB);
+	
+	rc = zmq_setsockopt(senders, ZMQ_SUBSCRIBE, "", 1);
+	
 	zmq_bind(senders, "tcp://*:5555");
 	
 	void *forward = zmq_socket(context, ZMQ_XPUB); 
@@ -28,17 +76,21 @@ int main(int argc, char **argv)
 	
 	zmq_pollitem_t items[] = 
 	{
-		{ senders, 0, ZMQ_POLLIN, 0 }
+		{ senders, 0, ZMQ_POLLIN, 0 },
+		{ 0, pipefds[0], ZMQ_POLLIN, 0}
 	};
-	
+
+
+	signal(SIGINT, sighandler);
+	signal(SIGTERM, sighandler);
+
 	while (1)
 	{
 		zmq_msg_t message;
 		
-		zmq_poll(items, 1, -1);
+		zmq_poll(items, 2, 1);
 		if (items[0].revents & ZMQ_POLLIN)
 		{
-			printf("Message received!\n");
 			while (1)
 			{
 				zmq_msg_init(&message);
@@ -51,6 +103,13 @@ int main(int argc, char **argv)
 					break;
 				}
 			}
+		}
+		if (items[1].revents & ZMQ_POLLIN)
+		{
+			char buffer[1];
+			read(pipefds[0], buffer, 1);
+			syslog(LOG_NOTICE, "Interrupt received, stopping system.");
+			break;
 		}
 	}
 	
