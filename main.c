@@ -61,34 +61,54 @@ int main(int argc, char **argv)
 			return 1;
 		}
 	}
-
+	
 	signal_fd = pipefds[1];
-
+	
 	void *context = zmq_ctx_new();
+	if (context == NULL)
+	{
+		syslog(LOG_ERR, "zmq_ctx_new error: %s", zmq_strerror(errno));
+		return 1;
+	}
 	void *senders = zmq_socket(context, ZMQ_XSUB);
+	if (senders == NULL)
+	{
+		syslog(LOG_ERR, "zmq_socket error: %s", zmq_strerror(errno));
+		return 1;
+	}
 	
-	rc = zmq_setsockopt(senders, ZMQ_SUBSCRIBE, "", 1);
+	const char *filter = "";
+	rc = zmq_setsockopt(senders, ZMQ_SUBSCRIBE, &filter, sizeof(filter));
 	
-	zmq_bind(senders, "tcp://*:5555");
+	rc = zmq_bind(senders, "tcp://*:5555");
+	if (rc == -1)
+	{
+		syslog(LOG_ERR, "Error: zmq_bind: %s", zmq_strerror(errno));
+		return 1;
+	}
 	
 	void *forward = zmq_socket(context, ZMQ_XPUB); 
-	zmq_bind(forward, "tcp://*:5556");
+	rc = zmq_bind(forward, "tcp://*:5556");
+	if (rc == -1)
+	{
+		syslog(LOG_ERR, "Error: zmq_bind: %s", zmq_strerror(errno));
+		return 1;
+	}
 	
 	zmq_pollitem_t items[] = 
 	{
 		{ senders, 0, ZMQ_POLLIN, 0 },
 		{ 0, pipefds[0], ZMQ_POLLIN, 0}
 	};
-
-
+	
 	signal(SIGINT, sighandler);
 	signal(SIGTERM, sighandler);
-
+	
 	while (1)
 	{
 		zmq_msg_t message;
 		
-		zmq_poll(items, 2, 1);
+		zmq_poll(items, 2, -1);
 		if (items[0].revents & ZMQ_POLLIN)
 		{
 			while (1)
