@@ -77,8 +77,8 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	
-	const char *filter = "";
-	rc = zmq_setsockopt(senders, ZMQ_SUBSCRIBE, &filter, sizeof(filter));
+	/* Subscribe to all messages */
+	zmq_send(senders, "\x01", 1, 0);
 	
 	rc = zmq_bind(senders, "tcp://*:5555");
 	if (rc == -1)
