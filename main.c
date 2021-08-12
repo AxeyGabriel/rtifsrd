@@ -136,6 +136,9 @@ int main(int argc, char **argv)
 	zmq_close(senders);
 	zmq_close(forward);
 	zmq_ctx_destroy(context);
-	
+
+	syslog(LOG_NOTIVE, "Gone.");
+	closelog();
+
 	return 0;
 }
